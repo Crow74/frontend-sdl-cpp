@@ -127,6 +127,15 @@ void SettingsWindow::DrawProjectMSettingsTab()
             BooleanSetting("projectM.droppedFolderOverride", false);
 
             ImGui::TableNextRow();
+            LabelWithTooltip("Ambient Speed",
+                             "Slows down preset motion (zoom/warp/rotation) and audio reactivity together, "
+                             "for a calmer look with slowly-evolving music. 1.0 = normal speed, lower = slower "
+                             "and less jumpy. Does not affect audio playback.\n"
+                             "Display/Transition/Hard Cut Duration below stay accurate in real seconds - "
+                             "they're automatically compensated for this setting.");
+            DoubleSetting("projectM.ambientSpeed", 1.0, 0.1, 1.0);
+
+            ImGui::TableNextRow();
             LabelWithTooltip("Preset Display Duration",
                              "Time in seconds a preset will be displayed before it's switched.");
             DoubleSetting("projectM.displayDuration", 30.0, 1.0, 240.0);

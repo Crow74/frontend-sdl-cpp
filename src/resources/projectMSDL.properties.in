@@ -69,6 +69,12 @@ projectM.texturePath = @DEFAULT_TEXTURES_PATH@
 # If true, displays the built-in projectM logo preset on startup.
 projectM.enableSplash = false
 
+# Slows down preset motion (zoom/warp/rotation) and audio reactivity together, for a calmer look
+# with slowly-evolving music. 1.0 = normal speed, lower values = slower/less jumpy. Does not affect
+# audio playback. displayDuration/transitionDuration/hardCutDuration below are automatically
+# compensated so they keep meaning real-world seconds regardless of this setting.
+projectM.ambientSpeed = 1.0
+
 # Preset display duration in seconds. If the time has passed, a soft cut is done to the next preset.
 projectM.displayDuration = 30
 

@@ -58,10 +58,8 @@ void ProjectMWrapper::initialize(Poco::Util::Application& app)
         projectm_set_preset_locked(_projectM, _projectMConfigView->getBool("presetLocked", false));
 
         // Preset display settings
-        projectm_set_preset_duration(_projectM, _projectMConfigView->getDouble("displayDuration", 30.0));
-        projectm_set_soft_cut_duration(_projectM, _projectMConfigView->getDouble("transitionDuration", 3.0));
+        ApplyCompensatedDurations();
         projectm_set_hard_cut_enabled(_projectM, _projectMConfigView->getBool("hardCutsEnabled", false));
-        projectm_set_hard_cut_duration(_projectM, _projectMConfigView->getDouble("hardCutDuration", 20.0));
         projectm_set_hard_cut_sensitivity(_projectM, static_cast<float>(_projectMConfigView->getDouble("hardCutSensitivity", 1.0)));
         projectm_set_beat_sensitivity(_projectM, static_cast<float>(_projectMConfigView->getDouble("beatSensitivity", 1.0)));
 
@@ -106,6 +104,10 @@ void ProjectMWrapper::initialize(Poco::Util::Application& app)
 
         projectm_playlist_set_preset_switched_event_callback(_playlist, &ProjectMWrapper::PresetSwitchedEvent, static_cast<void*>(this));
     }
+
+    // Baseline for the virtual preset clock driven from RenderFrame(). Starting it here (rather
+    // than at object construction) keeps the gap before the first real frame negligible.
+    _lastFrameTime = std::chrono::steady_clock::now();
 
     Poco::NotificationCenter::defaultCenter().addObserver(_playbackControlNotificationObserver);
 
@@ -153,8 +155,21 @@ void ProjectMWrapper::UpdateRealFPS(float fps)
     projectm_set_fps(_projectM, static_cast<uint32_t>(std::round(fps)));
 }
 
-void ProjectMWrapper::RenderFrame() const
+void ProjectMWrapper::RenderFrame()
 {
+    // Feed projectM a virtual clock instead of letting it use the real system time. Scaling the
+    // real elapsed time by "ambientSpeed" (< 1.0 = slower) uniformly slows both preset motion
+    // (zoom/warp/rotation, which read the preset clock) and audio-reactivity smoothing (the
+    // bass/mid/treb attack-decay filters, which are driven by the same per-frame delta time),
+    // without touching preset files or libprojectM itself.
+    auto now = std::chrono::steady_clock::now();
+    double realDeltaSeconds = std::chrono::duration<double>(now - _lastFrameTime).count();
+    _lastFrameTime = now;
+
+    double ambientSpeed = _projectMConfigView->getDouble("ambientSpeed", 1.0);
+    _virtualTime += realDeltaSeconds * ambientSpeed;
+    projectm_set_frame_time(_projectM, _virtualTime);
+
     glClearColor(0.0, 0.0, 0.0, 0.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -314,24 +329,15 @@ void ProjectMWrapper::OnConfigurationPropertyRemoved(const std::string& key)
         projectm_set_aspect_correction(_projectM, _projectMConfigView->getBool("aspectCorrectionEnabled", true));
     }
 
-    if (key == "projectM.displayDuration")
+    if (key == "projectM.displayDuration" || key == "projectM.transitionDuration" ||
+        key == "projectM.hardCutDuration" || key == "projectM.ambientSpeed")
     {
-        projectm_set_preset_duration(_projectM, _projectMConfigView->getDouble("displayDuration", 30.0));
-    }
-
-    if (key == "projectM.transitionDuration")
-    {
-        projectm_set_soft_cut_duration(_projectM, _projectMConfigView->getDouble("transitionDuration", 3.0));
+        ApplyCompensatedDurations();
     }
 
     if (key == "projectM.hardCutsEnabled")
     {
         projectm_set_aspect_correction(_projectM, _projectMConfigView->getBool("hardCutsEnabled", false));
-    }
-
-    if (key == "projectM.hardCutDuration")
-    {
-        projectm_set_hard_cut_duration(_projectM, _projectMConfigView->getDouble("hardCutDuration", 20.0));
     }
 
     if (key == "projectM.hardCutSensitivity")
@@ -343,4 +349,17 @@ void ProjectMWrapper::OnConfigurationPropertyRemoved(const std::string& key)
     {
         projectm_set_mesh_size(_projectM, _projectMConfigView->getUInt64("meshX", 48), _projectMConfigView->getUInt64("meshY", 32));
     }
+}
+
+void ProjectMWrapper::ApplyCompensatedDurations()
+{
+    // displayDuration/transitionDuration/hardCutDuration are compared against the virtual
+    // preset clock (see RenderFrame()), which advances at real time * ambientSpeed. Scaling the
+    // configured values by the same factor keeps them meaning real-world seconds regardless of
+    // the current ambientSpeed setting.
+    double ambientSpeed = _projectMConfigView->getDouble("ambientSpeed", 1.0);
+
+    projectm_set_preset_duration(_projectM, _projectMConfigView->getDouble("displayDuration", 30.0) * ambientSpeed);
+    projectm_set_soft_cut_duration(_projectM, _projectMConfigView->getDouble("transitionDuration", 3.0) * ambientSpeed);
+    projectm_set_hard_cut_duration(_projectM, _projectMConfigView->getDouble("hardCutDuration", 20.0) * ambientSpeed);
 }

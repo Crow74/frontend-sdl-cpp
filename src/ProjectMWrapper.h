@@ -11,6 +11,7 @@
 #include <Poco/Util/AbstractConfiguration.h>
 #include <Poco/Util/Subsystem.h>
 
+#include <chrono>
 #include <memory>
 
 class ProjectMWrapper : public Poco::Util::Subsystem
@@ -37,7 +38,7 @@ public:
     /**
      * Renders a single projectM frame.
      */
-    void RenderFrame() const;
+    void RenderFrame();
 
     /**
      * @brief Returns the targeted FPS value.
@@ -105,11 +106,21 @@ private:
      */
     void OnConfigurationPropertyRemoved(const std::string& key);
 
+    /**
+     * @brief Re-applies preset display/transition/hard-cut durations, compensated by the
+     * current "ambientSpeed" factor so the configured values keep their real-world-seconds
+     * meaning even while the virtual preset clock (see RenderFrame()) runs slower or faster.
+     */
+    void ApplyCompensatedDurations();
+
     Poco::AutoPtr<Poco::Util::AbstractConfiguration> _userConfig; //!< View of the "projectM" configuration subkey in the "user" configuration.
     Poco::AutoPtr<Poco::Util::AbstractConfiguration> _projectMConfigView; //!< View of the "projectM" configuration subkey in the "effective" configuration.
 
     projectm_handle _projectM{nullptr}; //!< Pointer to the projectM instance used by the application.
     projectm_playlist_handle _playlist{nullptr}; //!< Pointer to the projectM playlist manager instance.
+
+    std::chrono::steady_clock::time_point _lastFrameTime; //!< Real-clock timestamp of the previous RenderFrame() call.
+    double _virtualTime{0.0}; //!< Accumulated virtual preset clock, in seconds, fed to projectM via projectm_set_frame_time(). Advances at real time * ambientSpeed.
 
     Poco::NObserver<ProjectMWrapper, PlaybackControlNotification> _playbackControlNotificationObserver{*this, &ProjectMWrapper::PlaybackControlNotificationHandler};
 
