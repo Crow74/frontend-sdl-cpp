@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AudioCapture.h"
+#include "PresetLibrary.h"
 #include "ProjectMWrapper.h"
 #include "SDLRenderingWindow.h"
 
@@ -74,6 +75,7 @@ protected:
 
     AudioCapture& _audioCapture;
     ProjectMWrapper& _projectMWrapper;
+    PresetLibrary& _presetLibrary;
     SDLRenderingWindow& _sdlRenderingWindow;
 
     projectm_handle _projectMHandle{nullptr};

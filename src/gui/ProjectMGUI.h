@@ -3,6 +3,8 @@
 #include "AboutWindow.h"
 #include "HelpWindow.h"
 #include "MainMenu.h"
+#include "MediaBar.h"
+#include "PresetBrowserWindow.h"
 #include "SettingsWindow.h"
 #include "ToastMessage.h"
 
@@ -104,6 +106,11 @@ public:
      */
     void ShowHelpWindow();
 
+    /**
+     * @brief Displays the preset browser window (Browse / Favorites / Playlists).
+     */
+    void ShowPresetBrowserWindow();
+
 private:
     float GetScalingFactor();
 
@@ -131,6 +138,8 @@ private:
     SettingsWindow _settingsWindow{*this}; //!< The settings window.
     AboutWindow _aboutWindow{*this}; //!< The about window.
     HelpWindow _helpWindow; //!< Help window with shortcuts and tips.
+    PresetBrowserWindow _presetBrowserWindow{*this}; //!< Browse/Favorites/Playlists window.
+    MediaBar _mediaBar{*this}; //!< Bottom-centre transport strip.
 
     std::unique_ptr<ToastMessage> _toast; //!< Current toast to be displayed.
 

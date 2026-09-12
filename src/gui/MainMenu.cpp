@@ -1,6 +1,7 @@
 #include "gui/MainMenu.h"
 
 #include "AudioCapture.h"
+#include "PresetLibrary.h"
 #include "ProjectMSDLApplication.h"
 #include "ProjectMWrapper.h"
 
@@ -33,6 +34,11 @@ void MainMenu::Draw()
             if (ImGui::MenuItem("Settings...", "Ctrl+s"))
             {
                 _gui.ShowSettingsWindow();
+            }
+
+            if (ImGui::MenuItem("Preset Browser..."))
+            {
+                _gui.ShowPresetBrowserWindow();
             }
 
             ImGui::Separator();
@@ -75,6 +81,13 @@ void MainMenu::Draw()
             if (ImGui::MenuItem("Enable Shuffle", "y", app.config().getBool("projectM.shuffleEnabled", true)))
             {
                 _notificationCenter.postNotification(new PlaybackControlNotification(PlaybackControlNotification::Action::ToggleShuffle));
+            }
+
+            auto& presetLibrary = Poco::Util::Application::instance().getSubsystem<PresetLibrary>();
+            auto currentPreset = presetLibrary.CurrentPresetPath();
+            if (ImGui::MenuItem("Favorite Current Preset", "b", !currentPreset.empty() && presetLibrary.IsFavorite(currentPreset)))
+            {
+                presetLibrary.ToggleFavoriteCurrent();
             }
 
             ImGui::Separator();

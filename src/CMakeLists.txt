@@ -10,6 +10,8 @@ add_executable(projectMSDL WIN32 MACOSX_BUNDLE
         AudioCapture.h
         FPSLimiter.cpp
         FPSLimiter.h
+        PresetLibrary.cpp
+        PresetLibrary.h
         ProjectMSDLApplication.cpp
         ProjectMSDLApplication.h
         ProjectMWrapper.cpp
@@ -116,6 +118,7 @@ target_link_libraries(projectMSDL
         ProjectMSDL-Notifications
         libprojectM::playlist
         Poco::Util
+        Poco::JSON
         SDL2::SDL2$<$<STREQUAL:${SDL2_LINKAGE},static>:-static>
         SDL2::SDL2main
         OpenGL::$<IF:$<BOOL:${ENABLE_GLES}>,GLES3,GL>

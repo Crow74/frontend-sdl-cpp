@@ -15,6 +15,7 @@
 RenderLoop::RenderLoop()
     : _audioCapture(Poco::Util::Application::instance().getSubsystem<AudioCapture>())
     , _projectMWrapper(Poco::Util::Application::instance().getSubsystem<ProjectMWrapper>())
+    , _presetLibrary(Poco::Util::Application::instance().getSubsystem<PresetLibrary>())
     , _sdlRenderingWindow(Poco::Util::Application::instance().getSubsystem<SDLRenderingWindow>())
     , _projectMHandle(_projectMWrapper.ProjectM())
     , _playlistHandle(_projectMWrapper.Playlist())
@@ -267,6 +268,10 @@ void RenderLoop::KeyEvent(const SDL_KeyboardEvent& event, bool down)
         case SDLK_ESCAPE:
             _projectMGui.Toggle();
             _sdlRenderingWindow.ShowCursor(_projectMGui.Visible());
+            break;
+
+        case SDLK_b:
+            _presetLibrary.ToggleFavoriteCurrent();
             break;
 
         case SDLK_a: {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "FileChooser.h"
+#include "PresetLibrary.h"
 
 #include <Poco/Util/MapConfiguration.h>
 #include <Poco/Util/PropertyFileConfiguration.h>
@@ -74,6 +75,11 @@ private:
     void BooleanSetting(const std::string& property, bool defaultValue);
 
     /**
+     * @brief Displays the Playlist/Folder/All cycle scope radio group.
+     */
+    void CycleScopeSetting();
+
+    /**
      * @brief Displays a slider to set an integer min/max value.
      * @param property The property name in the config.
      * @param defaultValue Default value for the property if not set.
@@ -141,6 +147,7 @@ private:
 
     ProjectMGUI& _gui; //!< The GUI subsystem.
     AudioCapture& _audioCapture; //!< The audio capture subsystem.
+    PresetLibrary& _presetLibrary; //!< The preset library subsystem.
 
     bool _visible{false}; //!< Window visibility flag.
     bool _changed{false}; //!< true if the user changed any setting since the last save.

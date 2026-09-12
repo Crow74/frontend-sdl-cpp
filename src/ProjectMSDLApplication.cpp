@@ -5,6 +5,7 @@
 #include "ProjectMSDLApplication.h"
 
 #include "AudioCapture.h"
+#include "PresetLibrary.h"
 #include "ProjectMWrapper.h"
 #include "RenderLoop.h"
 #include "SDLRenderingWindow.h"
@@ -25,6 +26,7 @@ ProjectMSDLApplication::ProjectMSDLApplication()
     addSubsystem(new SDLRenderingWindow);
     addSubsystem(new ProjectMWrapper);
     addSubsystem(new AudioCapture);
+    addSubsystem(new PresetLibrary);
     addSubsystem(new ProjectMGUI);
 }
 

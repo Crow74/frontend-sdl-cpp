@@ -17,6 +17,7 @@
 SettingsWindow::SettingsWindow(ProjectMGUI& gui)
     : _gui(gui)
     , _audioCapture(ProjectMSDLApplication::instance().getSubsystem<AudioCapture>())
+    , _presetLibrary(ProjectMSDLApplication::instance().getSubsystem<PresetLibrary>())
     , _userConfiguration(ProjectMSDLApplication::instance().UserConfiguration())
     , _commandLineConfiguration(ProjectMSDLApplication::instance().CommandLineConfiguration())
 {
@@ -107,6 +108,13 @@ void SettingsWindow::DrawProjectMSettingsTab()
             ImGui::TableNextRow();
             LabelWithTooltip("Shuffle Presets", "Selects presets randomly from the current playlist.");
             BooleanSetting("projectM.shuffleEnabled", true);
+
+            ImGui::TableNextRow();
+            LabelWithTooltip("Cycle Scope",
+                             "What Next/Previous, shuffle and auto-advance cycle through:\n"
+                             "Playlist = the active playlist, Folder = only the current preset's own folder,\n"
+                             "All = every preset found under the preset path, Favorites = your favorited presets.");
+            CycleScopeSetting();
 
             ImGui::TableNextRow();
             LabelWithTooltip("Skip To Dropped Presets",
@@ -414,6 +422,50 @@ void SettingsWindow::BooleanSetting(const std::string& property, bool defaultVal
     ResetButton(property);
 
     if (_commandLineConfiguration->has(property))
+    {
+        OverriddenSettingMarker();
+    }
+}
+
+void SettingsWindow::CycleScopeSetting()
+{
+    ImGui::TableSetColumnIndex(1);
+
+    auto scope = _presetLibrary.Scope();
+    bool changed = false;
+
+    if (ImGui::RadioButton("Playlist##cyclescope", scope == CycleScope::Playlist))
+    {
+        _presetLibrary.SetScope(CycleScope::Playlist);
+        changed = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Folder##cyclescope", scope == CycleScope::Folder))
+    {
+        _presetLibrary.SetScope(CycleScope::Folder);
+        changed = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("All##cyclescope", scope == CycleScope::All))
+    {
+        _presetLibrary.SetScope(CycleScope::All);
+        changed = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Favorites##cyclescope", scope == CycleScope::Favorites))
+    {
+        _presetLibrary.SetScope(CycleScope::Favorites);
+        changed = true;
+    }
+
+    if (changed)
+    {
+        _changed = true;
+    }
+
+    ResetButton("projectM.cycleScope");
+
+    if (_commandLineConfiguration->has("projectM.cycleScope"))
     {
         OverriddenSettingMarker();
     }

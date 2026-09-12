@@ -29,6 +29,10 @@ add_library(ProjectMSDL-GUI STATIC
         HelpWindow.h
         MainMenu.cpp
         MainMenu.h
+        MediaBar.cpp
+        MediaBar.h
+        PresetBrowserWindow.cpp
+        PresetBrowserWindow.h
         PresetSelection.cpp
         PresetSelection.h
         ProjectMGUI.cpp
