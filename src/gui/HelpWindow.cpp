@@ -150,6 +150,8 @@ void HelpWindow::FillKeyboardShortcutsTable()
     _shortcuts = {
         {"Quit projectM", "Ctrl+q"},
         {"Toggle Menu/UI", "Escape"},
+        {"Open Settings", "Ctrl+s"},
+        {"Open Preset Browser", "b"},
         {"Next Preset in Playlist (immediate)", "n"},
         {"Next Preset in Playlist (smooth)", "Shift+n"},
         {"Previous Preset in Playlist (immediate)", "p"},
@@ -160,6 +162,7 @@ void HelpWindow::FillKeyboardShortcutsTable()
         {"Random Preset (smooth)", "Shift+r"},
         {"Lock Current Preset", "Spacebar"},
         {"Toggle Shuffle", "y"},
+        {"Toggle Favorite Current Preset", "f"},
         {"Toggle Fullscreen", "Ctrl-f, Right Mouse"},
         {"Toggle Aspect Correction", "Ctrl-a"},
         {"Next Audio Input Device", "Ctrl-i"},

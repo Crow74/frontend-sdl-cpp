@@ -271,7 +271,7 @@ void RenderLoop::KeyEvent(const SDL_KeyboardEvent& event, bool down)
             break;
 
         case SDLK_b:
-            _presetLibrary.ToggleFavoriteCurrent();
+            _projectMGui.ShowPresetBrowserWindow();
             break;
 
         case SDLK_a: {
@@ -298,6 +298,17 @@ void RenderLoop::KeyEvent(const SDL_KeyboardEvent& event, bool down)
             if (modifierPressed)
             {
                 _sdlRenderingWindow.ToggleFullscreen();
+            }
+            else
+            {
+                _presetLibrary.ToggleFavoriteCurrent();
+            }
+            break;
+
+        case SDLK_s:
+            if (modifierPressed)
+            {
+                _projectMGui.ShowSettingsWindow();
             }
             break;
 

@@ -443,9 +443,9 @@ void SettingsWindow::CycleScopeSetting()
     auto scope = _presetLibrary.Scope();
     bool changed = false;
 
-    if (ImGui::RadioButton("Playlist##cyclescope", scope == CycleScope::Playlist))
+    if (ImGui::RadioButton("All##cyclescope", scope == CycleScope::All))
     {
-        _presetLibrary.SetScope(CycleScope::Playlist);
+        _presetLibrary.SetScope(CycleScope::All);
         changed = true;
     }
     ImGui::SameLine();
@@ -455,15 +455,15 @@ void SettingsWindow::CycleScopeSetting()
         changed = true;
     }
     ImGui::SameLine();
-    if (ImGui::RadioButton("All##cyclescope", scope == CycleScope::All))
-    {
-        _presetLibrary.SetScope(CycleScope::All);
-        changed = true;
-    }
-    ImGui::SameLine();
     if (ImGui::RadioButton("Favorites##cyclescope", scope == CycleScope::Favorites))
     {
         _presetLibrary.SetScope(CycleScope::Favorites);
+        changed = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Playlist##cyclescope", scope == CycleScope::Playlist))
+    {
+        _presetLibrary.SetScope(CycleScope::Playlist);
         changed = true;
     }
 

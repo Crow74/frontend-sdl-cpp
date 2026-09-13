@@ -36,7 +36,7 @@ void MainMenu::Draw()
                 _gui.ShowSettingsWindow();
             }
 
-            if (ImGui::MenuItem("Preset Browser..."))
+            if (ImGui::MenuItem("Preset Browser...", "b"))
             {
                 _gui.ShowPresetBrowserWindow();
             }
@@ -85,7 +85,7 @@ void MainMenu::Draw()
 
             auto& presetLibrary = Poco::Util::Application::instance().getSubsystem<PresetLibrary>();
             auto currentPreset = presetLibrary.CurrentPresetPath();
-            if (ImGui::MenuItem("Favorite Current Preset", "b", !currentPreset.empty() && presetLibrary.IsFavorite(currentPreset)))
+            if (ImGui::MenuItem("Favorite Current Preset", "f", !currentPreset.empty() && presetLibrary.IsFavorite(currentPreset)))
             {
                 presetLibrary.ToggleFavoriteCurrent();
             }
