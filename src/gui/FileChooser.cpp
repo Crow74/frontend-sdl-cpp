@@ -37,6 +37,16 @@ void FileChooser::CurrentDirectory(const std::string& path)
     ChangeDirectory(path);
 }
 
+std::string FileChooser::CurrentDirectory() const
+{
+    return _currentDir.toString();
+}
+
+void FileChooser::DefaultFileName(const std::string& name)
+{
+    _defaultFileName = name;
+}
+
 void FileChooser::Context(const std::string& context)
 {
     _context = context;
@@ -71,6 +81,18 @@ bool FileChooser::MultiSelect() const
 void FileChooser::Show()
 {
     _selectedFiles.clear();
+    _confirmOverwrite = false;
+
+    if (_mode == Mode::SaveFile)
+    {
+        std::strncpy(_fileNameBuffer, _defaultFileName.c_str(), sizeof(_fileNameBuffer) - 1);
+        _fileNameBuffer[sizeof(_fileNameBuffer) - 1] = '\0';
+    }
+
+    // Files may have been created (e.g. exported) since this directory was last listed, and
+    // ChangeDirectory() otherwise skips re-scanning a path it's already sitting in.
+    ChangeDirectory(_currentDir, true);
+
     _visible = true;
 }
 
@@ -115,7 +137,13 @@ bool FileChooser::Draw()
             ChangeDirectory(std::string(pathBuffer));
         }
 
-        if (ImGui::BeginListBox("##filelist", ImVec2(-1, -ImGui::GetTextLineHeight() - ImGui::GetStyle().FramePadding.y * 2 - 4)))
+        // Reserve enough room below the list for whatever controls this mode draws there:
+        // one row (Cancel/Select) normally, but two in SaveFile mode (a filename field, or an
+        // overwrite warning, above the Cancel/Save row) - otherwise those get pushed below the
+        // popup's visible bounds.
+        float bottomRows = (_mode == Mode::SaveFile) ? 2.0f : 1.0f;
+        float reservedBottomHeight = bottomRows * ImGui::GetFrameHeightWithSpacing() + 4.0f;
+        if (ImGui::BeginListBox("##filelist", ImVec2(-1, -reservedBottomHeight)))
         {
             if (_currentDir.toString().empty())
             {
@@ -142,33 +170,100 @@ bool FileChooser::Draw()
             ImGui::EndListBox();
         }
 
-        ImGui::PushStyleColor(ImGuiCol_Button, 0xFF000080);
-        if (ImGui::Button("Cancel"))
+        if (_mode == Mode::SaveFile && _confirmOverwrite)
         {
-            _selectedFiles.clear();
-            fileSelected = true;
-            Close();
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.0f, 1.0f), "\"%s\" already exists.", _pendingSavePath.getFileName().c_str());
+            if (ImGui::Button("Overwrite"))
+            {
+                _selectedFiles.clear();
+                _selectedFiles.emplace_back(_pendingSavePath);
+                fileSelected = true;
+                Close();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Choose a Different Name"))
+            {
+                _confirmOverwrite = false;
+            }
         }
-        ImGui::PopStyleColor();
-        ImGui::SameLine();
-        if (ImGui::Button("Select"))
+        else if (_mode == Mode::SaveFile)
         {
-            for (auto index : _selectedFileIndices)
-            {
-                _selectedFiles.emplace_back(_currentFileList.at(index));
-            }
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputText("##savefilename", _fileNameBuffer, IM_ARRAYSIZE(_fileNameBuffer));
 
-            if (_selectedFileIndices.empty() && _mode == Mode::Directory)
+            ImGui::PushStyleColor(ImGuiCol_Button, 0xFF000080);
+            if (ImGui::Button("Cancel"))
             {
-                _selectedFiles.emplace_back(Poco::Path(_currentDir).makeDirectory());
+                _selectedFiles.clear();
+                fileSelected = true;
+                Close();
             }
-            else
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            if (ImGui::Button("Save"))
             {
-                // ToDo: Display "Select at least one entry from the list"
-            }
+                std::string typedName = Poco::trim(std::string(_fileNameBuffer));
+                if (!typedName.empty())
+                {
+                    if (!_extensions.empty())
+                    {
+                        std::string extensionWithDot = "." + _extensions.front();
+                        bool hasExtension = typedName.size() >= extensionWithDot.size() &&
+                            Poco::icompare(typedName.substr(typedName.size() - extensionWithDot.size()), extensionWithDot) == 0;
+                        if (!hasExtension)
+                        {
+                            typedName += extensionWithDot;
+                        }
+                    }
 
-            fileSelected = true;
-            Close();
+                    Poco::Path target(_currentDir);
+                    target.setFileName(typedName);
+
+                    if (Poco::File(target).exists())
+                    {
+                        _confirmOverwrite = true;
+                        _pendingSavePath = target;
+                    }
+                    else
+                    {
+                        _selectedFiles.clear();
+                        _selectedFiles.emplace_back(target);
+                        fileSelected = true;
+                        Close();
+                    }
+                }
+            }
+        }
+        else
+        {
+            ImGui::PushStyleColor(ImGuiCol_Button, 0xFF000080);
+            if (ImGui::Button("Cancel"))
+            {
+                _selectedFiles.clear();
+                fileSelected = true;
+                Close();
+            }
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            if (ImGui::Button("Select"))
+            {
+                for (auto index : _selectedFileIndices)
+                {
+                    _selectedFiles.emplace_back(_currentFileList.at(index));
+                }
+
+                if (_selectedFileIndices.empty() && _mode == Mode::Directory)
+                {
+                    _selectedFiles.emplace_back(Poco::Path(_currentDir).makeDirectory());
+                }
+                else
+                {
+                    // ToDo: Display "Select at least one entry from the list"
+                }
+
+                fileSelected = true;
+                Close();
+            }
         }
 
         ImGui::EndPopup();
@@ -261,6 +356,15 @@ bool FileChooser::PopulateFileList()
                     changeDir = true;
                     poco_debug_f1(_logger, "Changing dir to: %s", _currentDir.toString());
                 }
+                else if (_mode == Mode::SaveFile)
+                {
+                    // Copy the clicked file's name into the filename field instead of closing,
+                    // so the user can review/edit it (e.g. deliberately pick an existing file
+                    // to overwrite) before confirming with the Save button.
+                    auto clickedName = filePath.getFileName();
+                    std::strncpy(_fileNameBuffer, clickedName.c_str(), sizeof(_fileNameBuffer) - 1);
+                    _fileNameBuffer[sizeof(_fileNameBuffer) - 1] = '\0';
+                }
                 else
                 {
                     _selectedFiles.emplace_back(filePath);
@@ -282,11 +386,11 @@ bool FileChooser::PopulateFileList()
     return fileSelected;
 }
 
-void FileChooser::ChangeDirectory(Poco::Path newDirectory)
+void FileChooser::ChangeDirectory(Poco::Path newDirectory, bool forceRescan)
 {
     newDirectory.makeDirectory();
 
-    if (_currentDir.toString() == newDirectory.toString())
+    if (!forceRescan && _currentDir.toString() == newDirectory.toString())
     {
         return;
     }
@@ -339,9 +443,10 @@ void FileChooser::ChangeDirectory(Poco::Path newDirectory)
                 auto fileExtension = directoryIterator.path().getExtension();
                 for (const auto& extension : _extensions)
                 {
-                    if (Poco::icompare(directoryIterator.path().getExtension(), extension) != 0)
+                    if (Poco::icompare(fileExtension, extension) == 0)
                     {
                         _currentFileList.push_back(*directoryIterator);
+                        break;
                     }
                 }
             }

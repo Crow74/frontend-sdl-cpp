@@ -17,7 +17,8 @@ public:
     enum class Mode {
         File,
         Directory,
-        Both
+        Both,
+        SaveFile //!< Like File, but lets the user type a new (possibly non-existent) filename to save to.
     };
 
     FileChooser() = delete;
@@ -47,6 +48,18 @@ public:
      * @param path Sets the new current directory for the chooser dialog.
      */
     void CurrentDirectory(const std::string& path);
+
+    /**
+     * @brief Returns the directory currently shown in the chooser.
+     */
+    std::string CurrentDirectory() const;
+
+    /**
+     * @brief Sets the filename pre-filled into the filename field in Mode::SaveFile.
+     * Not used in other modes.
+     * @param name The default filename, without a path.
+     */
+    void DefaultFileName(const std::string& name);
 
     /**
      * @brief Sets the current file chooser context of the caller.
@@ -127,8 +140,12 @@ protected:
      * The path must not necessarily exist or be accessible. A message is shown to the user if something is wrong.
      *
      * @param newDirectory The directory to chdir into
+     * @param forceRescan If true, re-scans even if newDirectory is the same as the current
+     * directory (the directory listing is otherwise only read once per distinct path - see
+     * Show(), which forces a rescan of the current directory so files created since the last
+     * time this directory was visited actually show up).
      */
-    void ChangeDirectory(Poco::Path newDirectory);
+    void ChangeDirectory(Poco::Path newDirectory, bool forceRescan = false);
 
     /**
      * @brief Updates the current list selection for the given index.
@@ -148,6 +165,10 @@ protected:
     std::string _title; //!< The window title.
     std::string _context; //!< Context data for the caller.
     std::vector<std::string> _extensions; //!< File extensions to filter.
+    std::string _defaultFileName; //!< Pre-filled filename, Mode::SaveFile only.
+    char _fileNameBuffer[512]{}; //!< Edit buffer for the Mode::SaveFile filename field.
+    bool _confirmOverwrite{false}; //!< True while the "file exists, overwrite?" prompt is shown.
+    Poco::Path _pendingSavePath; //!< The path awaiting overwrite confirmation.
     Mode _mode{Mode::File}; //!< Chooser mode, either file or directory.
     bool _visible{ false }; //!< File chooser window visible.
     bool _showHidden{ false }; //!< If true, hidden files/dirs are shown.

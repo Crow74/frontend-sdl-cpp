@@ -3,12 +3,14 @@
 #include <projectM-4/playlist.h>
 #include <projectM-4/projectM.h>
 
+#include <Poco/JSON/Object.h>
 #include <Poco/Logger.h>
 #include <Poco/Util/AbstractConfiguration.h>
 #include <Poco/Util/Subsystem.h>
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 class ProjectMWrapper;
@@ -84,6 +86,16 @@ public:
     /** @brief Favorite preset paths, sorted for display. */
     std::vector<std::string> FavoritesSorted() const;
 
+    /** @brief Writes the current favorites to an arbitrary file, in the same format as the
+     * internal favorites file. */
+    void ExportFavorites(const std::string& filePath) const;
+
+    /** @brief Reads favorites from an arbitrary file (as written by ExportFavorites) and merges
+     * them into the current favorites, skipping duplicates. Paths that no longer exist locally
+     * are re-linked by filename against the current preset tree, same as ReconcilePathsAfterRescan
+     * does for moved presets. Posts a toast summarizing the result. */
+    void ImportFavorites(const std::string& filePath);
+
     // --- named playlists ---------------------------------------------------
 
     const std::vector<NamedPlaylist>& Playlists() const;
@@ -102,6 +114,40 @@ public:
 
     /** @brief Moves an item from one index to another within the same playlist (for reordering). */
     void MoveInPlaylist(const std::string& id, size_t from, size_t to);
+
+    /** @brief Writes the given playlist to an arbitrary file (name + items, no internal id). */
+    void ExportPlaylist(const std::string& id, const std::string& filePath) const;
+
+    /** @brief Reads a playlist from an arbitrary file (as written by ExportPlaylist) and adds it
+     * as a new playlist with a freshly generated id, named after the imported file itself
+     * (its filename minus ".json", not whatever name was stored inside it at export time -
+     * matches what the user sees on disk). If a playlist with that name already exists, the
+     * new one is suffixed ("(Imported)", "(Imported 2)", ...). Item paths that no longer exist
+     * locally are re-linked by filename, same as ImportFavorites. Posts a toast summarizing the
+     * result.
+     * @return The id of the newly created playlist, or an empty string if the file couldn't be
+     * read. */
+    std::string ImportPlaylist(const std::string& filePath);
+
+    /** @brief What kind of file ImportPlaylist()/ImportFavorites() would find at a given path,
+     * without importing anything yet - lets the UI catch e.g. a Favorites export being picked
+     * in the Playlist import dialog and offer ImportFavoritesAsPlaylist() instead. */
+    enum class ImportFileKind
+    {
+        Playlist,  //!< Has an "items" array - what ExportPlaylist()/ImportPlaylist() use.
+        Favorites, //!< Has a "favorites" array - what ExportFavorites()/ImportFavorites() use.
+        Invalid    //!< Neither; not readable, not valid JSON, or an unrecognized shape.
+    };
+
+    ImportFileKind DetectImportFileKind(const std::string& filePath) const;
+
+    /** @brief Imports a Favorites-shaped file's presets as a new playlist (same naming/
+     * collision/path-resolution/toast behavior as ImportPlaylist) instead of merging them into
+     * Favorites - for when the user confirms converting a favorites export they picked in the
+     * Playlist import dialog by mistake.
+     * @return The id of the newly created playlist, or an empty string if the file couldn't be
+     * read. */
+    std::string ImportFavoritesAsPlaylist(const std::string& filePath);
 
     std::string ActivePlaylistId() const;
 
@@ -151,6 +197,16 @@ private:
      * since they were saved, matching by filename against the freshly scanned tree. */
     void ReconcilePathsAfterRescan();
 
+    /** @brief Builds a lowercase-filename -> full-path index of every preset file in the
+     * current tree. Used both by ReconcilePathsAfterRescan and by favorites/playlist import to
+     * re-link paths that don't exist verbatim on this machine. */
+    std::unordered_map<std::string, std::string> BuildFileNameIndex() const;
+
+    /** @brief If `path` doesn't exist as-is, looks it up by filename in `byFileName` and
+     * returns the match; otherwise returns `path` unchanged. Never returns an empty string
+     * unless `path` was empty. */
+    static std::string ResolveImportedPath(const std::string& path, const std::unordered_map<std::string, std::string>& byFileName);
+
     std::vector<std::string> GetPresetPaths() const;
 
     /** @brief Non-recursive listing of preset files directly inside a folder, alphabetical. */
@@ -168,6 +224,15 @@ private:
 
     void LoadPlaylists();
     void SavePlaylists();
+
+    /** @brief Writes a JSON object to an arbitrary file path (2-space indented, same style as
+     * the internal data files). Logs and returns false on failure. */
+    bool WriteJson(const Poco::JSON::Object& root, const std::string& filePath) const;
+
+    /** @brief Shared tail end of ImportPlaylist()/ImportFavoritesAsPlaylist(): names a new
+     * playlist after `filePath`'s own filename (suffixing on a name collision), resolves
+     * `paths` against the current preset tree, saves, and posts a summary toast. */
+    std::string CreatePlaylistFromImportedPaths(const std::string& filePath, const std::vector<std::string>& paths);
 
     void OnConfigurationPropertyChanged(const Poco::Util::AbstractConfiguration::KeyValue& property);
 

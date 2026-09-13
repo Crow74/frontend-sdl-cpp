@@ -4,12 +4,17 @@
 
 #include "imgui.h"
 
+#include <Poco/File.h>
 #include <Poco/Path.h>
 #include <Poco/String.h>
 #include <Poco/Util/Application.h>
 
+#include <Poco/JSON/Object.h>
+#include <Poco/JSON/Parser.h>
+
 #include <algorithm>
 #include <cstring>
+#include <fstream>
 #include <functional>
 
 namespace {
@@ -23,6 +28,22 @@ std::string PathLabel(const PresetLibrary& library, const std::string& fullPath)
     std::replace(relative.begin(), relative.end(), '\\', '/');
     auto name = Poco::Path(fullPath).getFileName();
     return relative.empty() ? name : (relative + "/" + name);
+}
+
+/** @brief Strips characters that aren't valid in a Windows filename, for building a default
+ * export filename out of a user-chosen playlist name. */
+std::string SanitizeFileName(const std::string& name)
+{
+    std::string result;
+    result.reserve(name.size());
+    for (char ch : name)
+    {
+        if (std::string("\\/:*?\"<>|").find(ch) == std::string::npos)
+        {
+            result += ch;
+        }
+    }
+    return result.empty() ? "playlist" : result;
 }
 
 constexpr ImVec4 kPlayingBg{0.10f, 0.33f, 0.14f, 0.80f};
@@ -62,6 +83,13 @@ PresetBrowserWindow::PresetBrowserWindow(ProjectMGUI& gui)
     : _gui(gui)
     , _presetLibrary(Poco::Util::Application::instance().getSubsystem<PresetLibrary>())
 {
+    _importChooser.AllowedExtensions({"json"});
+    _importChooser.Title("Import");
+
+    _exportChooser.AllowedExtensions({"json"});
+    _exportChooser.Title("Export");
+
+    LoadRememberedDirectories();
 }
 
 void PresetBrowserWindow::Show()
@@ -79,28 +107,39 @@ void PresetBrowserWindow::Draw()
     ImGui::SetNextWindowSize(ImVec2(560, 620), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Preset Browser", &_visible))
     {
-        DrawScopeSelector();
-        ImGui::Separator();
-
-        if (ImGui::BeginTabBar("PresetBrowserTabs"))
+        // Cycle Scope sits at the bottom, away from the tab bar - it used to be right above
+        // the tabs, close enough that "Favorites"/"Playlist" (scope radio buttons) and
+        // "Favorites"/"Playlists" (tabs) were easy to misclick between. Reserve its row here
+        // (outer child, so the ImVec2(0,0) "fill available space" children inside each tab
+        // below correctly shrink to leave room for it, rather than pushing it off the bottom
+        // of the window - same fix as the FileChooser Save-mode layout bug).
+        float scopeRowHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y * 2.0f + 4.0f;
+        if (ImGui::BeginChild("##PresetBrowserTabsRegion", ImVec2(0, -scopeRowHeight)))
         {
-            if (ImGui::BeginTabItem("Browse"))
+            if (ImGui::BeginTabBar("PresetBrowserTabs"))
             {
-                DrawBrowseTab();
-                ImGui::EndTabItem();
+                if (ImGui::BeginTabItem("Browse"))
+                {
+                    DrawBrowseTab();
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Favorites"))
+                {
+                    DrawFavoritesTab();
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Playlists"))
+                {
+                    DrawPlaylistsTab();
+                    ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
             }
-            if (ImGui::BeginTabItem("Favorites"))
-            {
-                DrawFavoritesTab();
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Playlists"))
-            {
-                DrawPlaylistsTab();
-                ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
         }
+        ImGui::EndChild();
+
+        ImGui::Separator();
+        DrawScopeSelector();
     }
     ImGui::End();
 
@@ -112,6 +151,133 @@ void PresetBrowserWindow::Draw()
         _openAddToPlaylistPopup = false;
     }
     DrawAddToPlaylistPopup();
+
+    if (_openConvertFavoritesPopup)
+    {
+        ImGui::OpenPopup("ConvertFavoritesToPlaylistPopup");
+        _openConvertFavoritesPopup = false;
+    }
+    DrawConvertFavoritesToPlaylistPopup();
+
+    // Both must be called unconditionally every frame regardless of the other's result -
+    // short-circuiting a || here would skip drawing whichever chooser is second.
+    bool importChosen = _importChooser.Draw();
+    bool exportChosen = _exportChooser.Draw();
+    if (importChosen)
+    {
+        HandleImportChooserResult();
+    }
+    if (exportChosen)
+    {
+        HandleExportChooserResult();
+    }
+}
+
+void PresetBrowserWindow::HandleImportChooserResult()
+{
+    // Remember where the user ended up regardless of outcome - same as a native dialog would.
+    SaveRememberedDirectories();
+
+    const auto& selected = _importChooser.SelectedFiles();
+    if (selected.empty())
+    {
+        return; // user cancelled
+    }
+
+    auto filePath = selected.front().path();
+    if (_importChooser.Context() == "favorites")
+    {
+        _presetLibrary.ImportFavorites(filePath);
+    }
+    else if (_importChooser.Context() == "playlist")
+    {
+        if (_presetLibrary.DetectImportFileKind(filePath) == PresetLibrary::ImportFileKind::Favorites)
+        {
+            // Wrong dialog, most likely - ask before silently creating an empty playlist
+            // (ImportPlaylist() would find no "items" array and just fail) or guessing.
+            _pendingFavoritesAsPlaylistFile = filePath;
+            _openConvertFavoritesPopup = true;
+        }
+        else
+        {
+            auto newId = _presetLibrary.ImportPlaylist(filePath);
+            if (!newId.empty())
+            {
+                _selectedPlaylistId = newId;
+            }
+        }
+    }
+}
+
+void PresetBrowserWindow::HandleExportChooserResult()
+{
+    SaveRememberedDirectories();
+
+    const auto& selected = _exportChooser.SelectedFiles();
+    if (selected.empty())
+    {
+        return; // user cancelled
+    }
+
+    auto filePath = selected.front().path();
+    if (_exportChooser.Context() == "favorites")
+    {
+        _presetLibrary.ExportFavorites(filePath);
+    }
+    else if (_exportChooser.Context() == "playlist")
+    {
+        _presetLibrary.ExportPlaylist(_selectedPlaylistId, filePath);
+    }
+}
+
+std::string PresetBrowserWindow::DirectoryMemoryFilePath() const
+{
+    Poco::Path dir = Poco::Path::configHome();
+    dir.makeDirectory().append("projectM/");
+    Poco::File(dir).createDirectories();
+
+    auto baseName = Poco::Util::Application::instance().config().getString("application.baseName", "projectMSDL");
+    dir.setFileName(baseName + ".browserdirs.json");
+    return dir.toString();
+}
+
+void PresetBrowserWindow::LoadRememberedDirectories()
+{
+    std::string importDir = Poco::Path::home();
+    std::string exportDir = Poco::Path::home();
+
+    std::ifstream in(DirectoryMemoryFilePath(), std::ios::binary);
+    if (in)
+    {
+        try
+        {
+            Poco::JSON::Parser parser;
+            auto result = parser.parse(in);
+            auto root = result.extract<Poco::JSON::Object::Ptr>();
+            importDir = root->optValue<std::string>("importDirectory", importDir);
+            exportDir = root->optValue<std::string>("exportDirectory", exportDir);
+        }
+        catch (Poco::Exception&)
+        {
+            // Not critical data - fall back to the defaults already set above.
+        }
+    }
+
+    _importChooser.CurrentDirectory(importDir);
+    _exportChooser.CurrentDirectory(exportDir);
+}
+
+void PresetBrowserWindow::SaveRememberedDirectories() const
+{
+    Poco::JSON::Object root;
+    root.set("importDirectory", _importChooser.CurrentDirectory());
+    root.set("exportDirectory", _exportChooser.CurrentDirectory());
+
+    std::ofstream out(DirectoryMemoryFilePath(), std::ios::binary | std::ios::trunc);
+    if (out)
+    {
+        root.stringify(out, 2);
+    }
 }
 
 void PresetBrowserWindow::DrawScopeSelector()
@@ -121,10 +287,10 @@ void PresetBrowserWindow::DrawScopeSelector()
 
     auto scope = _presetLibrary.Scope();
 
-    bool isPlaylist = scope == CycleScope::Playlist;
-    if (ImGui::RadioButton("Playlist", isPlaylist))
+    bool isAll = scope == CycleScope::All;
+    if (ImGui::RadioButton("All", isAll))
     {
-        _presetLibrary.SetScope(CycleScope::Playlist);
+        _presetLibrary.SetScope(CycleScope::All);
     }
     ImGui::SameLine();
 
@@ -135,21 +301,27 @@ void PresetBrowserWindow::DrawScopeSelector()
     }
     ImGui::SameLine();
 
-    bool isAll = scope == CycleScope::All;
-    if (ImGui::RadioButton("All", isAll))
-    {
-        _presetLibrary.SetScope(CycleScope::All);
-    }
-    ImGui::SameLine();
-
     bool isFavorites = scope == CycleScope::Favorites;
     if (ImGui::RadioButton("Favorites", isFavorites))
     {
         _presetLibrary.SetScope(CycleScope::Favorites);
     }
-
     ImGui::SameLine();
-    ImGui::Dummy(ImVec2(12.0f, 0.0f));
+
+    bool isPlaylist = scope == CycleScope::Playlist;
+    if (ImGui::RadioButton("Playlist", isPlaylist))
+    {
+        _presetLibrary.SetScope(CycleScope::Playlist);
+    }
+}
+
+void PresetBrowserWindow::DrawBrowseTab()
+{
+    ImGui::SetNextItemWidth(-70.0f);
+    if (ImGui::InputTextWithHint("##filter", "Filter presets...", _filterBuffer, sizeof(_filterBuffer)))
+    {
+        _filter = Poco::toLower(std::string(_filterBuffer));
+    }
     ImGui::SameLine();
     if (ImGui::Button("Refresh"))
     {
@@ -159,14 +331,6 @@ void PresetBrowserWindow::DrawScopeSelector()
     if (ImGui::IsItemHovered())
     {
         ImGui::SetTooltip("Re-scan the preset folder for added/removed/moved files.");
-    }
-}
-
-void PresetBrowserWindow::DrawBrowseTab()
-{
-    if (ImGui::InputTextWithHint("##filter", "Filter presets...", _filterBuffer, sizeof(_filterBuffer)))
-    {
-        _filter = Poco::toLower(std::string(_filterBuffer));
     }
 
     ImGui::BeginChild("##BrowseTree", ImVec2(0, 0), true);
@@ -250,9 +414,28 @@ void PresetBrowserWindow::DrawFavoritesTab()
 {
     auto favorites = _presetLibrary.FavoritesSorted();
 
+    ImGui::BeginDisabled(favorites.empty());
+    if (ImGui::Button("Export..."))
+    {
+        _exportChooser.Context("favorites");
+        _exportChooser.Title("Export Favorites");
+        _exportChooser.DefaultFileName("favorites.json");
+        _exportChooser.Show();
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Import..."))
+    {
+        _importChooser.Context("favorites");
+        _importChooser.Title("Import Favorites");
+        _importChooser.Show();
+    }
+
+    ImGui::Separator();
+
     if (favorites.empty())
     {
-        ImGui::TextDisabled("No favorites yet. Press \"b\" while a preset is playing, or use the star button.");
+        ImGui::TextDisabled("No favorites yet. Press \"f\" while a preset is playing, or use the star button.");
         return;
     }
 
@@ -295,19 +478,38 @@ void PresetBrowserWindow::DrawPlaylistsTab()
     {
         _presetLibrary.SetActivePlaylist(_selectedPlaylistId);
     }
+    ImGui::SameLine();
+    if (ImGui::Button("Export..."))
+    {
+        std::string defaultName = "playlist.json";
+        if (const auto* playlist = _presetLibrary.FindPlaylist(_selectedPlaylistId))
+        {
+            defaultName = SanitizeFileName(playlist->name) + ".json";
+        }
+        _exportChooser.Context("playlist");
+        _exportChooser.Title("Export Playlist");
+        _exportChooser.DefaultFileName(defaultName);
+        _exportChooser.Show();
+    }
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Import..."))
+    {
+        _importChooser.Context("playlist");
+        _importChooser.Title("Import Playlist");
+        _importChooser.Show();
+    }
 
     ImGui::Separator();
 
     ImGui::BeginChild("##PlaylistList", ImVec2(180, 0), true);
     for (const auto& playlist : playlists)
     {
-        bool selected = playlist.id == _selectedPlaylistId;
+        bool isActive = playlist.id == _presetLibrary.ActivePlaylistId();
+        bool selected = playlist.id == _selectedPlaylistId || isActive;
         std::string label = playlist.name + " (" + std::to_string(playlist.items.size()) + ")";
-        if (playlist.id == _presetLibrary.ActivePlaylistId())
-        {
-            label = "* " + label;
-        }
+
+        NowPlayingStyleGuard style(isActive);
         if (ImGui::Selectable((label + "##" + playlist.id).c_str(), selected))
         {
             _selectedPlaylistId = playlist.id;
@@ -461,6 +663,37 @@ void PresetBrowserWindow::DrawAddToPlaylistPopup()
             auto id = _presetLibrary.CreatePlaylist("");
             _presetLibrary.AddToPlaylist(id, _addToPlaylistTarget);
             _selectedPlaylistId = id;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+}
+
+void PresetBrowserWindow::DrawConvertFavoritesToPlaylistPopup()
+{
+    if (ImGui::BeginPopupModal("ConvertFavoritesToPlaylistPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::TextUnformatted("This looks like a Favorites export, not a playlist:");
+        ImGui::TextDisabled("%s", Poco::Path(_pendingFavoritesAsPlaylistFile).getFileName().c_str());
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Import its presets as a new playlist instead?");
+        ImGui::Spacing();
+
+        if (ImGui::Button("Yes, Import as Playlist"))
+        {
+            auto newId = _presetLibrary.ImportFavoritesAsPlaylist(_pendingFavoritesAsPlaylistFile);
+            if (!newId.empty())
+            {
+                _selectedPlaylistId = newId;
+            }
+            _pendingFavoritesAsPlaylistFile.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel"))
+        {
+            _pendingFavoritesAsPlaylistFile.clear();
             ImGui::CloseCurrentPopup();
         }
 

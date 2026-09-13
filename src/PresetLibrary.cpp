@@ -101,7 +101,49 @@ void PresetLibrary::Rescan()
 
 void PresetLibrary::ReconcilePathsAfterRescan()
 {
-    // Filename -> full path, from the freshly scanned tree. First match wins if the
+    // Re-links paths that no longer exist to a same-named file found elsewhere in the new
+    // tree (i.e. the preset was moved/reorganised on disk since it was favorited or added to
+    // a playlist). Also the basis for resolving imported favorites/playlists, see
+    // BuildFileNameIndex()/ResolveImportedPath().
+    auto byFileName = BuildFileNameIndex();
+
+    bool favoritesChanged = false;
+    for (auto& path : _favorites)
+    {
+        auto resolved = ResolveImportedPath(path, byFileName);
+        if (resolved != path)
+        {
+            path = resolved;
+            favoritesChanged = true;
+        }
+    }
+    if (favoritesChanged)
+    {
+        SaveFavorites();
+    }
+
+    bool playlistsChanged = false;
+    for (auto& playlist : _playlists)
+    {
+        for (auto& path : playlist.items)
+        {
+            auto resolved = ResolveImportedPath(path, byFileName);
+            if (resolved != path)
+            {
+                path = resolved;
+                playlistsChanged = true;
+            }
+        }
+    }
+    if (playlistsChanged)
+    {
+        SavePlaylists();
+    }
+}
+
+std::unordered_map<std::string, std::string> PresetLibrary::BuildFileNameIndex() const
+{
+    // Filename -> full path, from the current scanned tree. First match wins if the
     // library happens to contain two files with the same name.
     std::unordered_map<std::string, std::string> byFileName;
     std::function<void(const std::vector<PresetTreeNode>&)> walk = [&](const std::vector<PresetTreeNode>& nodes) {
@@ -118,46 +160,17 @@ void PresetLibrary::ReconcilePathsAfterRescan()
         }
     };
     walk(_tree);
+    return byFileName;
+}
 
-    // Re-links a path that no longer exists to a same-named file found elsewhere in the
-    // new tree (i.e. the preset was moved/reorganised on disk since it was favorited or
-    // added to a playlist). Returns true if the path was changed.
-    auto relink = [&](std::string& path) {
-        if (path.empty() || Poco::File(path).exists())
-        {
-            return false;
-        }
-        auto it = byFileName.find(Poco::toLower(Poco::Path(path).getFileName()));
-        if (it == byFileName.end() || it->second == path)
-        {
-            return false;
-        }
-        path = it->second;
-        return true;
-    };
-
-    bool favoritesChanged = false;
-    for (auto& path : _favorites)
+std::string PresetLibrary::ResolveImportedPath(const std::string& path, const std::unordered_map<std::string, std::string>& byFileName)
+{
+    if (path.empty() || Poco::File(path).exists())
     {
-        favoritesChanged = relink(path) || favoritesChanged;
+        return path;
     }
-    if (favoritesChanged)
-    {
-        SaveFavorites();
-    }
-
-    bool playlistsChanged = false;
-    for (auto& playlist : _playlists)
-    {
-        for (auto& path : playlist.items)
-        {
-            playlistsChanged = relink(path) || playlistsChanged;
-        }
-    }
-    if (playlistsChanged)
-    {
-        SavePlaylists();
-    }
+    auto it = byFileName.find(Poco::toLower(Poco::Path(path).getFileName()));
+    return it != byFileName.end() ? it->second : path;
 }
 
 const std::vector<PresetTreeNode>& PresetLibrary::Tree() const
@@ -665,6 +678,18 @@ std::string PresetLibrary::DataFilePath(const std::string& suffix) const
     return dir.toString();
 }
 
+bool PresetLibrary::WriteJson(const Poco::JSON::Object& root, const std::string& filePath) const
+{
+    std::ofstream out(filePath, std::ios::binary | std::ios::trunc);
+    if (!out)
+    {
+        poco_warning_f1(_logger, "Could not write file: %s", filePath);
+        return false;
+    }
+    root.stringify(out, 2);
+    return true;
+}
+
 void PresetLibrary::LoadFavorites()
 {
     _favorites.clear();
@@ -706,13 +731,92 @@ void PresetLibrary::SaveFavorites()
     Poco::JSON::Object root;
     root.set("favorites", array);
 
-    std::ofstream out(DataFilePath(".favorites.json"), std::ios::binary | std::ios::trunc);
-    if (!out)
+    WriteJson(root, DataFilePath(".favorites.json"));
+}
+
+void PresetLibrary::ExportFavorites(const std::string& filePath) const
+{
+    Poco::JSON::Array array;
+    for (const auto& path : _favorites)
     {
-        poco_warning(_logger, "Could not write favorites file.");
+        array.add(path);
+    }
+
+    Poco::JSON::Object root;
+    root.set("favorites", array);
+
+    if (WriteJson(root, filePath))
+    {
+        std::string toastText = "Exported " + std::to_string(_favorites.size()) + " favorite" +
+            (_favorites.size() == 1 ? "" : "s") + " to " + Poco::Path(filePath).getFileName();
+        Poco::NotificationCenter::defaultCenter().postNotification(new DisplayToastNotification(std::move(toastText)));
+    }
+}
+
+void PresetLibrary::ImportFavorites(const std::string& filePath)
+{
+    std::ifstream in(filePath, std::ios::binary);
+    if (!in)
+    {
+        Poco::NotificationCenter::defaultCenter().postNotification(
+            new DisplayToastNotification("Could not open file: " + Poco::Path(filePath).getFileName()));
         return;
     }
-    root.stringify(out, 2);
+
+    std::vector<std::string> importedPaths;
+    try
+    {
+        Poco::JSON::Parser parser;
+        auto result = parser.parse(in);
+        auto root = result.extract<Poco::JSON::Object::Ptr>();
+        auto array = root->getArray("favorites");
+        if (array)
+        {
+            for (size_t i = 0; i < array->size(); ++i)
+            {
+                importedPaths.push_back(array->getElement<std::string>(static_cast<unsigned int>(i)));
+            }
+        }
+    }
+    catch (Poco::Exception& ex)
+    {
+        poco_warning_f1(_logger, "Could not read favorites import file: %s", ex.displayText());
+        Poco::NotificationCenter::defaultCenter().postNotification(
+            new DisplayToastNotification("Invalid favorites file: " + Poco::Path(filePath).getFileName()));
+        return;
+    }
+
+    auto byFileName = BuildFileNameIndex();
+
+    int added = 0;
+    int missing = 0;
+    for (const auto& importedPath : importedPaths)
+    {
+        auto resolved = ResolveImportedPath(importedPath, byFileName);
+        if (std::find(_favorites.begin(), _favorites.end(), resolved) != _favorites.end())
+        {
+            continue;
+        }
+
+        _favorites.push_back(resolved);
+        added++;
+        if (!Poco::File(resolved).exists())
+        {
+            missing++;
+        }
+    }
+
+    if (added > 0)
+    {
+        SaveFavorites();
+    }
+
+    std::string toastText = "Imported " + std::to_string(added) + " favorite" + (added == 1 ? "" : "s");
+    if (missing > 0)
+    {
+        toastText += " (" + std::to_string(missing) + " not found locally)";
+    }
+    Poco::NotificationCenter::defaultCenter().postNotification(new DisplayToastNotification(std::move(toastText)));
 }
 
 void PresetLibrary::LoadPlaylists()
@@ -789,13 +893,190 @@ void PresetLibrary::SavePlaylists()
     Poco::JSON::Object root;
     root.set("playlists", array);
 
-    std::ofstream out(DataFilePath(".playlists.json"), std::ios::binary | std::ios::trunc);
-    if (!out)
+    WriteJson(root, DataFilePath(".playlists.json"));
+}
+
+void PresetLibrary::ExportPlaylist(const std::string& id, const std::string& filePath) const
+{
+    auto it = std::find_if(_playlists.begin(), _playlists.end(),
+                           [&](const NamedPlaylist& playlist) { return playlist.id == id; });
+    if (it == _playlists.end())
     {
-        poco_warning(_logger, "Could not write playlists file.");
         return;
     }
-    root.stringify(out, 2);
+
+    Poco::JSON::Array items;
+    for (const auto& item : it->items)
+    {
+        items.add(item);
+    }
+
+    Poco::JSON::Object root;
+    root.set("name", it->name);
+    root.set("items", items);
+
+    if (WriteJson(root, filePath))
+    {
+        std::string toastText = "Exported playlist \"" + it->name + "\" (" +
+            std::to_string(it->items.size()) + " presets)";
+        Poco::NotificationCenter::defaultCenter().postNotification(new DisplayToastNotification(std::move(toastText)));
+    }
+}
+
+std::string PresetLibrary::ImportPlaylist(const std::string& filePath)
+{
+    std::ifstream in(filePath, std::ios::binary);
+    if (!in)
+    {
+        Poco::NotificationCenter::defaultCenter().postNotification(
+            new DisplayToastNotification("Could not open file: " + Poco::Path(filePath).getFileName()));
+        return "";
+    }
+
+    std::vector<std::string> items;
+    try
+    {
+        Poco::JSON::Parser parser;
+        auto result = parser.parse(in);
+        auto root = result.extract<Poco::JSON::Object::Ptr>();
+        auto itemsArray = root->getArray("items");
+        if (!itemsArray)
+        {
+            // Valid JSON, but not the shape ExportPlaylist() writes (e.g. a Favorites export,
+            // or something unrelated) - DetectImportFileKind() is how the UI catches the
+            // Favorites case ahead of time and offers ImportFavoritesAsPlaylist() instead.
+            Poco::NotificationCenter::defaultCenter().postNotification(
+                new DisplayToastNotification("Invalid playlist file: " + Poco::Path(filePath).getFileName()));
+            return "";
+        }
+        for (size_t i = 0; i < itemsArray->size(); ++i)
+        {
+            items.push_back(itemsArray->getElement<std::string>(static_cast<unsigned int>(i)));
+        }
+    }
+    catch (Poco::Exception& ex)
+    {
+        poco_warning_f1(_logger, "Could not read playlist import file: %s", ex.displayText());
+        Poco::NotificationCenter::defaultCenter().postNotification(
+            new DisplayToastNotification("Invalid playlist file: " + Poco::Path(filePath).getFileName()));
+        return "";
+    }
+
+    return CreatePlaylistFromImportedPaths(filePath, items);
+}
+
+PresetLibrary::ImportFileKind PresetLibrary::DetectImportFileKind(const std::string& filePath) const
+{
+    std::ifstream in(filePath, std::ios::binary);
+    if (!in)
+    {
+        return ImportFileKind::Invalid;
+    }
+
+    try
+    {
+        Poco::JSON::Parser parser;
+        auto result = parser.parse(in);
+        auto root = result.extract<Poco::JSON::Object::Ptr>();
+        if (root->has("items"))
+        {
+            return ImportFileKind::Playlist;
+        }
+        if (root->has("favorites"))
+        {
+            return ImportFileKind::Favorites;
+        }
+    }
+    catch (Poco::Exception&)
+    {
+    }
+    return ImportFileKind::Invalid;
+}
+
+std::string PresetLibrary::ImportFavoritesAsPlaylist(const std::string& filePath)
+{
+    std::ifstream in(filePath, std::ios::binary);
+    if (!in)
+    {
+        Poco::NotificationCenter::defaultCenter().postNotification(
+            new DisplayToastNotification("Could not open file: " + Poco::Path(filePath).getFileName()));
+        return "";
+    }
+
+    std::vector<std::string> paths;
+    try
+    {
+        Poco::JSON::Parser parser;
+        auto result = parser.parse(in);
+        auto root = result.extract<Poco::JSON::Object::Ptr>();
+        auto array = root->getArray("favorites");
+        if (array)
+        {
+            for (size_t i = 0; i < array->size(); ++i)
+            {
+                paths.push_back(array->getElement<std::string>(static_cast<unsigned int>(i)));
+            }
+        }
+    }
+    catch (Poco::Exception& ex)
+    {
+        poco_warning_f1(_logger, "Could not read favorites file: %s", ex.displayText());
+        Poco::NotificationCenter::defaultCenter().postNotification(
+            new DisplayToastNotification("Invalid favorites file: " + Poco::Path(filePath).getFileName()));
+        return "";
+    }
+
+    return CreatePlaylistFromImportedPaths(filePath, paths);
+}
+
+std::string PresetLibrary::CreatePlaylistFromImportedPaths(const std::string& filePath, const std::vector<std::string>& paths)
+{
+    // Named after the imported file itself (not whatever name might be stored inside it at
+    // export time, which the user found confusing when they didn't match) - e.g.
+    // "My Set.json" -> "My Set".
+    std::string name = Poco::Path(filePath).getBaseName();
+
+    // Avoid an ambiguous duplicate name: name, then "name (Imported)", "name (Imported 2)", ...
+    std::string uniqueName = name;
+    int attempt = 1;
+    while (std::any_of(_playlists.begin(), _playlists.end(),
+                       [&](const NamedPlaylist& playlist) { return playlist.name == uniqueName; }))
+    {
+        attempt++;
+        uniqueName = name + " (Imported" + (attempt == 2 ? "" : (" " + std::to_string(attempt - 1))) + ")";
+    }
+
+    std::string id = CreatePlaylist(uniqueName);
+
+    auto byFileName = BuildFileNameIndex();
+    int missing = 0;
+    std::vector<std::string> resolvedItems;
+    resolvedItems.reserve(paths.size());
+    for (const auto& path : paths)
+    {
+        auto resolved = ResolveImportedPath(path, byFileName);
+        resolvedItems.push_back(resolved);
+        if (!Poco::File(resolved).exists())
+        {
+            missing++;
+        }
+    }
+
+    if (auto* playlist = FindPlaylist(id))
+    {
+        playlist->items = std::move(resolvedItems);
+    }
+    SavePlaylists();
+
+    std::string toastText = "Imported playlist \"" + uniqueName + "\" (" + std::to_string(paths.size()) + " presets";
+    if (missing > 0)
+    {
+        toastText += ", " + std::to_string(missing) + " not found locally";
+    }
+    toastText += ")";
+    Poco::NotificationCenter::defaultCenter().postNotification(new DisplayToastNotification(std::move(toastText)));
+
+    return id;
 }
 
 // --- configuration events -----------------------------------------------------------
