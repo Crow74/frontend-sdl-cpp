@@ -1,0 +1,113 @@
+diff --git a/src/libprojectM/ProjectM.cpp b/src/libprojectM/ProjectM.cpp
+index 88fa014ba..ee8c0bd9e 100644
+--- a/src/libprojectM/ProjectM.cpp
++++ b/src/libprojectM/ProjectM.cpp
+@@ -150,7 +150,7 @@ void ProjectM::RenderFrame()
+ 
+     if (m_transition != nullptr && m_transitioningPreset != nullptr)
+     {
+-        if (m_transition->IsDone())
++        if (m_transition->IsDone(m_timeKeeper->SmoothRatio()))
+         {
+             m_activePreset = std::move(m_transitioningPreset);
+             m_transitioningPreset.reset();
+@@ -180,7 +180,7 @@ void ProjectM::RenderFrame()
+ 
+     if (m_transition != nullptr && m_transitioningPreset != nullptr)
+     {
+-        m_transition->Draw(*m_activePreset, *m_transitioningPreset, renderContext, audioData);
++        m_transition->Draw(*m_activePreset, *m_transitioningPreset, renderContext, audioData, m_timeKeeper->SmoothRatio());
+     }
+     else
+     {
+diff --git a/src/libprojectM/Renderer/PresetTransition.cpp b/src/libprojectM/Renderer/PresetTransition.cpp
+index 2a27f0021..4d484ba2d 100644
+--- a/src/libprojectM/Renderer/PresetTransition.cpp
++++ b/src/libprojectM/Renderer/PresetTransition.cpp
+@@ -2,6 +2,7 @@
+ 
+ #include "TextureManager.hpp"
+ 
++#include <algorithm>
+ #include <array>
+ #include <cmath>
+ #include <cstddef>
+@@ -33,16 +34,16 @@ void PresetTransition::InitVertexAttrib()
+     glBufferData(GL_ARRAY_BUFFER, sizeof(points), points.data(), GL_STATIC_DRAW);
+ }
+ 
+-auto PresetTransition::IsDone() const -> bool
++auto PresetTransition::IsDone(double progress) const -> bool
+ {
+-    const auto secondsSinceStart = std::chrono::duration<double>(std::chrono::system_clock::now() - m_transitionStartTime).count();
+-    return m_durationSeconds <= 0.0 || secondsSinceStart >= m_durationSeconds;
++    return m_durationSeconds <= 0.0 || progress >= 1.0;
+ }
+ 
+ void PresetTransition::Draw(const Preset& oldPreset,
+                             const Preset& newPreset,
+                             const RenderContext& context,
+-                            const libprojectM::Audio::FrameAudioData& audioData)
++                            const libprojectM::Audio::FrameAudioData& audioData,
++                            double progress)
+ {
+     using namespace std::chrono_literals;
+ 
+@@ -53,7 +54,9 @@ void PresetTransition::Draw(const Preset& oldPreset,
+ 
+     std::mt19937 rand32(m_randomDevice());
+ 
+-    // Calculate progress values
++    // Wall-clock elapsed time, kept only for the cosmetic timeParams shader uniform below -
++    // actual progress/duration decisions use the externally-supplied "progress" parameter so
++    // they stay in sync with TimeKeeper's clock (which may run slower/faster than real time).
+     const auto secondsSinceStart = std::chrono::duration<double>(std::chrono::system_clock::now() - m_transitionStartTime).count();
+ 
+     // If duration is zero,
+@@ -63,7 +66,7 @@ void PresetTransition::Draw(const Preset& oldPreset,
+ 
+     if (m_durationSeconds > 0.0)
+     {
+-        linearProgress = secondsSinceStart / m_durationSeconds;
++        linearProgress = std::min(std::max(progress, 0.0), 1.0);
+         cosineProgress = (-std::cos(linearProgress * PI) + 1.0) * 0.5;
+         bicubicProgress = linearProgress < 0.5 ? 4.0 * linearProgress * linearProgress * linearProgress : 1.0 - pow(-2.0 * linearProgress + 2.0, 3.0) / 2.0;
+     }
+diff --git a/src/libprojectM/Renderer/PresetTransition.hpp b/src/libprojectM/Renderer/PresetTransition.hpp
+index 2623324a7..0ee3da049 100644
+--- a/src/libprojectM/Renderer/PresetTransition.hpp
++++ b/src/libprojectM/Renderer/PresetTransition.hpp
+@@ -28,9 +28,17 @@ public:
+ 
+     /**
+      * @brief Returns true if the transition is done.
++     * @param progress External transition progress ratio (0.0 = just started, >= 1.0 = done),
++     *        driven by the same clock TimeKeeper uses (real or user-specified via
++     *        projectm_set_frame_time()). Ambiviz addition: previously this measured real
++     *        wall-clock time internally via std::chrono::system_clock, which desynced from
++     *        TimeKeeper's SmoothRatio() (used to decide when smoothing itself ends) whenever a
++     *        user-specified frame time runs slower than real time - the transition would report
++     *        "done" and null out the transitioning preset before TimeKeeper ever agreed, which
++     *        permanently wedged IsSmoothing() true and froze all future preset switching.
+      * @return false if the transition is still in progress, true if it's done.
+      */
+-    auto IsDone() const -> bool;
++    auto IsDone(double progress) const -> bool;
+ 
+     /**
+      * @brief Updates the transition variables and renders the shader quad to the current FBO.
+@@ -38,11 +46,13 @@ public:
+      * @param newPreset A reference to the new (fading in) preset.
+      * @param context The rendering context used to render the presets.
+      * @param audioData Current audio data and beat detection values.
++     * @param progress External transition progress ratio, see IsDone().
+      */
+     void Draw(const Preset& oldPreset,
+               const Preset& newPreset,
+               const RenderContext& context,
+-              const libprojectM::Audio::FrameAudioData& audioData);
++              const libprojectM::Audio::FrameAudioData& audioData,
++              double progress);
+ 
+ private:
+     std::vector<std::string> m_noiseTextureNames{"noise_lq",

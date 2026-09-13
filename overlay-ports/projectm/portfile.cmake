@@ -11,6 +11,18 @@ vcpkg_from_github(
         # version) so the frontend can feed projectM a virtual/dilated clock. See
         # ../../docs/STATUS.md and ProjectMWrapper::RenderFrame() for how it's used.
         ambient-frame-time.patch
+        # Ambiviz addition: Renderer::PresetTransition measured its own duration via
+        # std::chrono::system_clock internally, independent of TimeKeeper/the frame-time patch
+        # above. Whenever the virtual clock runs slower than real time (ambientSpeed < 1.0), the
+        # transition object would report "done" (real time) before TimeKeeper's SmoothRatio()
+        # agreed (virtual time), permanently nulling the transitioning preset and wedging
+        # IsSmoothing() true forever - freezing all future preset auto-advance after the first
+        # transition. Fix: PresetTransition::IsDone()/Draw() now take an externally-supplied
+        # progress value (TimeKeeper::SmoothRatio()) instead of reading the wall clock. Upstream
+        # master independently arrived at an equivalent fix later (PresetTransition redesigned to
+        # take TimeKeeper::GetFrameTime()), entangled with an unrelated Mesh/sprite-manager
+        # refactor we don't want here, hence this smaller standalone version.
+        fix-ambient-transition-deadlock.patch
 )
 
 vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS

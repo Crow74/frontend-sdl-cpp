@@ -1,8 +1,8 @@
 {
   "name": "projectm",
   "version": "4.1.7",
-  "port-version": 1,
-  "description": "The projectM Music Visualizer. A cross-platform, OpenGL-based reimplementation of Milkdrop as a reusable library. Ambiviz overlay: backports the upstream projectm_set_frame_time()/projectm_get_last_frame_time() API (added upstream after this release) onto the 4.1.7 source, see ambient-frame-time.patch.",
+  "port-version": 2,
+  "description": "The projectM Music Visualizer. A cross-platform, OpenGL-based reimplementation of Milkdrop as a reusable library. Ambiviz overlay: backports the upstream projectm_set_frame_time()/projectm_get_last_frame_time() API (added upstream after this release, see ambient-frame-time.patch) plus a fix so PresetTransition respects that same clock instead of the real wall clock internally (see fix-ambient-transition-deadlock.patch).",
   "homepage": "https://github.com/projectM-visualizer/projectm",
   "license": "LGPL-2.1-only AND MIT AND MIT-0 AND Apache-2.0",
   "dependencies": [
