@@ -1,5 +1,10 @@
 # ProjectM SDL2 Frontend
 
+> **This is a fork** ([Crow74/frontend-sdl-cpp](https://github.com/Crow74/frontend-sdl-cpp), branch
+> `ambiviz-features`) adding favorites, playlists, a preset browser, an "ambient"
+> slow-motion mode, and a media transport bar. See [FORK_CHANGES.md](FORK_CHANGES.md)
+> for details. Everything below this note is the original upstream documentation.
+
 This is a reference implementation of an application that makes use of the projectM music visualization library.
 
 It will listen to audio input and produce mesmerizing visuals. Some commands are supported.
